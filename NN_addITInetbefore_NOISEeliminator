@@ -1,0 +1,148 @@
+clc
+clear
+close all
+
+file1=['E:\willcel\Desktop\Movie\willcel\signal_processing_part']; %default folder
+file3=['E:\willcel\Desktop\Movie\willcel\signal_processing_part\netHome'];
+
+SNR = 8.5;9.5:1:12.5;10;(9.5:1:10.5)+2;9:0.5:12;13;2:10;4;2:10;
+namePresciption='bitL7_3tc5hk_p35p05_yst46_strai';
+needtrain=1;
+SNRnum=length(SNR);
+
+len_eqlz=5;
+data_cfg=struct('no_track',5,'no_bit',4096,'train_bit',245000);
+
+
+mse_err1=zeros(1,length(SNR));
+mse_err2=zeros(1,length(SNR));
+
+for k=1:SNRnum 
+    snr_dB = SNR(k);
+    snr = 10^(snr_dB/10);
+    sigma = 1/(snr)^0.5;  % 标准差
+    sigma2 = sigma^2;     % 方差
+    
+    cd([file1,'\tmperorayITInetTrainData'])
+    sxx=['trdataiti_',namePresciption,'_snr',num2str(SNR(k)),'.mat'];
+    load(sxx);
+
+    cd([file1,'\noisetrain_datastore'])
+    sxx=['trdatanoise_',namePresciption,'_snr',num2str(SNR(k)),'.mat'];
+    load(sxx)
+    cd(file1)
+%----------------------------------
+    data_cfg.train_bit=length(tmpV0_total_test(1,:));
+    index_serial=10:1:data_cfg.train_bit-10;
+    tmp=round(data_cfg.train_bit*0.8);
+    train_id = 1:tmp;
+    test_id = tmp+1:data_cfg.train_bit-30;
+
+    V0_total_test = tmpV0_total_test;  
+    V0_total_test = V0_total_test(:,:)+sigma*randn(size(V0_total_test(:,:)));
+    bittotal_test = tmpbittotal_test;
+
+    cd([file3,'\itinet_',namePresciption])
+    load(['ITInet',num2str(SNR(k)),'.mat'],'ITInet_yesLLR')
+    cd(file1)
+    
+    true_classes_test = vec2ind(gen_ITItarget(bittotal_test));
+%     true_classes_test = true_classes_test(1,(len_eqlz-1)/2+1:length(bittotal_test(1,:))-(len_eqlz-1)/2);
+    
+    input_test =[ones(3,2) V0_total_test ones(3,2) ];
+    NN_input_test2 = reshape_readback(input_test,length(input_test));
+    NN_input_test=[NN_input_test2; LLR_total];
+    y_est = ITInet_yesLLR(NN_input_test);
+    classes_yesLLR = vec2ind(y_est);
+    idx_yesLLR = find(classes_yesLLR~=true_classes_test);
+    ITInetAccuracy_yesLLR(k)=1- length(idx_yesLLR)/length(classes_yesLLR)
+
+%----------------------------------
+  
+    for i=1:length(true_classes_test(1,:))
+        ideal_output2(1,i)=userbank(true_classes_test(i),i);
+        ideal_output3(1,i)=userbank(classes_yesLLR(i),i);
+        zk_iti(1,i)=Eq_bank(classes_yesLLR(i),i);
+    end
+    ideal_output1=userbank(5,:);
+
+
+if(needtrain)
+    %---------train----------
+    for i=1:length(zk_iti(1,:))
+        output_noise(1,i)=zk_iti(1,i)-ideal_output1(1,i);  % train output: y(3,k) - convolution target * u(k)
+    end
+    
+    %
+    %为python准备数据 理想输出
+    cd([file1,'\python_tr_data'])
+    sxx1=['OutITIclass_',namePresciption,'_snr',num2str(SNR(k)),'.txt'];
+    A=(true_classes_test-1)';
+%     A=true_classes_test;
+    writematrix(A(:,:),sxx1)
+
+    sxx15=['Readback_and_LLR_',namePresciption,'_snr',num2str(SNR(k)),'.txt'];
+    writematrix(NN_input_test,sxx15)
+
+    sxx15=['output_noise_',namePresciption,'_snr',num2str(SNR(k)),'.txt'];
+    writematrix(output_noise,sxx15)
+    %}
+    
+    
+    %{
+    %准备python数据的时候要注释掉
+    NN_input_train=NN_input_test2;
+    input_total=NN_input_train(:,index_serial(train_id));
+    output_total=output_noise(:,index_serial(train_id));
+
+    net=fitnet(50);
+    net.trainParam.epochs = 30;
+    [NoiseNet,tr] = train(net,input_total,output_total);
+    cd([file1,'\netHome'])
+    mkdir(['noisenet_',namePresciption])
+    cd([file1,'\netHome\noisenet_',namePresciption])
+    sxx=['NoiseNet_itiP_target5_snr',num2str(SNR(k)),'.mat'];
+    save(sxx,'NoiseNet')
+    %}
+else
+    cd([file1,'\netHome\noisenet_',namePresciption])
+    sxx=['NoiseNet_snr',num2str(SNR(k)),'.mat'];
+    load(sxx,'NoiseNet')
+end
+
+    %---------test----------
+%     load noisenet1
+    
+%     cd(file1)
+%     input_test=NN_input_train(:,index_serial(test_id));
+%     noise_predict = NoiseNet(input_test);
+%     zk_noiseCancel = zk_iti(:,index_serial(test_id))-noise_predict;
+% 
+%     mse_err1(k) =mse(ideal_output1(index_serial(test_id)),zk_iti(:,index_serial(test_id)));
+%     mse_err2(k) =mse(ideal_output1(index_serial(test_id)),zk_noiseCancel);
+% 
+%     mseC=[mse_err1;mse_err2];
+
+end
+
+
+% figure
+% plot(SNR,mseC(1,:),'-bo',SNR,mseC(2,:),'-ro')
+% grid on
+% legend('before','noiseCancel')
+% xlabel('SNR')
+% title('mse大小')
+
+
+% seeTog=[output_test;true_result];
+
+
+
+% mse_errtmp(k) =mse(ideal_output1(index_mse),zk5(index_mse+Eqlz_output_shift));
+% % mse_err2(k) =mse_err2(k)+ mse(ideal_output1(index_mse),zk_iti(index_mse+Eqlz_output_shift));
+% % mse_err3(k) =mse_err3(k)+ mse(ideal_output2(index_mse),zk_iti(index_mse+Eqlz_output_shift));
+% % mse_err3(k) =mse_err3(k)+ mse(ideal_output2(index_mse),zk5(index_mse+Eqlz_output_shift));
+% % mse_err4(k) =mse_err4(k)+ mse(ideal_output1(index_mse),zk_acc_iti(index_mse+Eqlz_output_shift));
+% mse_err5tmp(k)= mse(ideal_output2(index_mse),zk_acc_iti(index_mse+Eqlz_output_shift));
+% mse_err(k)=mse_errtmp(k)+mse_err(k);
+% mse_err5(k)=mse_err5tmp(k)+mse_err5(k);
